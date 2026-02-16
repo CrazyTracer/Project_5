@@ -107,28 +107,69 @@ prophet_mape = mean_absolute_percentage_error(test_df['y'].values, prophet_pred_
 print(f"Prophet SMAPE: {prophet_smape:.2f}%")
 print(f"Prophet MAPE:  {prophet_mape:.2f}%")
 
-# --- 5. ВИЗУАЛИЗАЦИЯ РЕЗУЛЬТАТОВ ---
+# --- 5. НЕЙРОСЕТЬ: MLP (Multi-Layer Perceptron) ---
+
+print("\n--- Об MLP (Нейросеть) ---")
+
+# Шаг 5.1: Подготовка данных (создаем лаги на основе ВСЕХ данных, чтобы не потерять связь)
+# Для обучения берем только train часть, чтобы избежать утечки данных
+full_lagged = create_lags(df, lags=12)
+
+# Нам нужно разделить lagged данные так, чтобы они совпадали с нашим train/test сплитом.
+# Поскольку create_lags отбрасывает первые 12 строк, индексы смещаются.
+# Простой способ: берем данные для обучения, предсказываем последние 12 точек.
+
+# Формируем X (признаки) и y (цель)
+X = full_lagged.drop(columns=['y', 'ds']).values
+y = full_lagged['y'].values
+dates_lagged = full_lagged['ds']
+
+# Разделение: последние 12 значений - это тест, остальное - трейн
+split_idx = len(X) - 12
+X_train, X_test = X[:split_idx], X[split_idx:]
+y_train, y_test = y[:split_idx], y[split_idx:]
+dates_test = dates_lagged[split_idx:]
+
+# Шаг 5.2: Масштабирование (очень важно для NN)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Шаг 5.3: Обучение модели
+mlp = MLPRegressor(
+    hidden_layer_sizes=(64, 32), 
+    activation='relu', 
+    max_iter=500, 
+    random_state=42
+)
+mlp.fit(X_train_scaled, y_train)
+
+# Шаг 5.4: Предсказание
+mlp_pred = mlp.predict(X_test_scaled)
+
+mlp_smape = calculate_smape(y_test, mlp_pred)
+print(f"MLP SMAPE: {mlp_smape:.2f}%")
+
+# --- 6. ВИЗУАЛИЗАЦИЯ ВСЕХ ТРЕХ МОДЕЛЕЙ ---
 
 plt.figure(figsize=(14, 7))
 
-# Исходные данные
-plt.plot(df['ds'], df['y'], label='Фактические продажи (История)', color='black', linewidth=2)
+# История
+plt.plot(df['ds'], df['y'], label='Фактические продажи', color='black', alpha=0.6)
 
-# Прогноз ARIMA
-plt.plot(test_df['ds'], arima_pred, label=f'ARIMA (SMAPE: {arima_smape:.1f}%)', color='red', linestyle='--', marker='o')
+# ARIMA
+plt.plot(test_df['ds'], arima_pred, label=f'ARIMA (SMAPE: {arima_smape:.1f}%)', linestyle='--', marker='o')
 
-# Прогноз Prophet
-# Отрисуем "хвост" прогноза пророка (включая исторический фит и предсказание)
-plt.plot(prophet_forecast['ds'], prophet_forecast['yhat'], label=f'Prophet (SMAPE: {prophet_smape:.1f}%)', color='blue', linewidth=2)
+# Prophet
+# Отрисовываем только прогнозную часть
+plt.plot(test_df['ds'], prophet_pred, label=f'Prophet (SMAPE: {prophet_smape:.1f}%)', linewidth=2)
 
-# Оформление
-plt.title('Сравнение прогнозирования спроса: ARIMA vs Prophet')
+# MLP (Нейросеть)
+plt.plot(dates_test, mlp_pred, label=f'MLP Neural Net (SMAPE: {mlp_smape:.1f}%)', linestyle='-.', color='green', marker='x')
+
+plt.title('Сравнение моделей: ARIMA vs Prophet vs Нейросеть (MLP)')
 plt.xlabel('Дата')
 plt.ylabel('Объем продаж')
 plt.legend()
 plt.grid(True)
-plt.show()
-
-# Дополнительный график: компоненты Prophet (тренд и сезонность)
-model.plot_components(prophet_forecast)
 plt.show()
